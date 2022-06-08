@@ -42,10 +42,10 @@ class FolgMeg:
 
         self._api = tweepy.API(
             tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret),
-            wait_on_rate_limit=True
+            wait_on_rate_limit=False
         )
 
-        self._me = self._api.verify_credentials(skip_status=True)
+        self._verify_self()
 
     @staticmethod
     def _init_db(db_path: Path):
@@ -73,58 +73,76 @@ class FolgMeg:
         self._follow_candidates()
         self._validate_following()
 
+    def _verify_self(self):
+        try:
+            self._me = self._api.verify_credentials(skip_status=True)
+        except tweepy.errors.TweepyException as e:
+            logger.error(f'Could not verify self: {e}')
+
     def _update_follower_list(self):
-        self._me = self._api.verify_credentials(skip_status=True)
+        self._verify_self()
 
         if self._db.query(Follower).count() != self._me.followers_count:
-            self._db.query(Follower).delete()
-            self._db.bulk_save_objects(
-                [
-                    Follower(id=follower)
-                    for follower in tweepy.Cursor(self._api.get_follower_ids, user_id=self._me.id).items()
-                ]
-            )
+            try:
+                self._db.query(Follower).delete()
+                self._db.bulk_save_objects(
+                    [
+                        Follower(id=follower)
+                        for follower in tweepy.Cursor(self._api.get_follower_ids, user_id=self._me.id).items()
+                    ]
+                )
 
-            self._db.commit()
+                self._db.commit()
+            except tweepy.TweepyException as e:
+                self._db.rollback()
+
+                logger.error(f'Could not update followers of self: {e}')
 
     def _update_organic_following(self):
         if self._db.query(OrganicFollowing).count() == 0:
-            self._db.bulk_save_objects(
-                [
-                    OrganicFollowing(id=following)
-                    for following in tweepy.Cursor(self._api.get_friend_ids, user_id=self._me.id).items()
-                ]
-            )
+            try:
+                self._db.bulk_save_objects(
+                    [
+                        OrganicFollowing(id=following)
+                        for following in tweepy.Cursor(self._api.get_friend_ids, user_id=self._me.id).items()
+                    ]
+                )
 
-            self._db.commit()
+                self._db.commit()
+            except tweepy.TweepyException as e:
+                self._db.rollback()
+
+                logger.error(f'Could not seed organic following: {e}')
 
     def _identify_candidates(self):
-        in_flight = self._db.query(ScriptedFollowingStatus).filter(
-            ScriptedFollowingStatus.status.in_((Status.pending, Status.following))
+        pending = self._db.query(ScriptedFollowingStatus).filter(
+            ScriptedFollowingStatus.status == Status.pending
         ).count()
 
-        if in_flight / self._db.query(Follower).count() < self._target_inflight_ratio:
+        if pending / self._db.query(Follower).count() < self._target_inflight_ratio:
             organic_following = self._db.query(OrganicFollowing).order_by(func.random()).limit(
                 self._following_sample_size
             ).all()
 
             followers_of_following = []
             for following in organic_following:
-                followers_of_following.extend(self._api.get_follower_ids(user_id=following.id, count=100))
+                try:
+                    followers_of_following.extend(self._api.get_follower_ids(user_id=following.id, count=100))
+                except tweepy.TweepyException as e:
+                    logger.error(f'Could not fetch followers of {following.id}: {e}')
 
             followers_of_following = random.sample(followers_of_following, self._following_sample_size)
             seven_days_ago = datetime.utcnow() - self._activity_lookback
             for follower in followers_of_following:
-                # Skip if I'm going to follow them
+                # Skip if they are scheduled to be followed
                 if self._db.query(ScriptedFollowingStatus).filter(ScriptedFollowingStatus.id == follower).count() == 1:
                     continue
 
-                # Skip if they follow me
+                # Skip if they are already a follower
                 if self._db.query(Follower).filter(Follower.id == follower).count() == 1:
                     continue
 
                 last_tweets = []
-
                 try:
                     last_tweets.extend([
                         t for t in self._api.user_timeline(
@@ -146,11 +164,10 @@ class FolgMeg:
                     hour = tweet.created_at.hour
                     hours[hour] = hours[hour] + 1
 
-                # Is actually earliest, most common
-                most_active_hour = max(hours, key=hours.get)
+                earliest_most_common_hour = max(hours, key=hours.get)
 
                 tomorrow = datetime.utcnow() + timedelta(days=1)
-                follow_time = tomorrow.replace(hour=most_active_hour)
+                follow_time = tomorrow.replace(hour=earliest_most_common_hour)
 
                 self._db.add(
                     ScriptedFollowingStatus(
@@ -160,6 +177,8 @@ class FolgMeg:
                     )
                 )
                 self._db.commit()
+
+                logger.info(f'Added candidate {follower}, to be followed after {follow_time}')
 
     def _follow_candidates(self):
         due_pending = self._db.query(ScriptedFollowingStatus).filter(
@@ -174,10 +193,13 @@ class FolgMeg:
                 self._api.create_friendship(user_id=p.id)
 
                 p.status = Status.following
-                p.next_due = datetime.utcnow() + timedelta(days=14)
+                p.next_due = datetime.utcnow() + self._following_followup_time
+
+                logger.info(f'Followed {p.id}, to check for followback after {p.next_due}')
             except Exception as e:
-                logger.error(f'Could not follow {p.id}: {e}')
                 self._db.delete(p)
+
+                logger.error(f'Could not follow {p.id}: {e}')
             finally:
                 self._db.commit()
 
@@ -196,12 +218,16 @@ class FolgMeg:
 
                     f.status = Status.expired
                     f.next_due = None
+
+                    logger.info(f'Unfollowed {f.id}')
                 except Exception as e:
-                    logger.error(f'Could not unfollow {f.id}: {e}')
                     self._db.delete(f)
+                    logger.error(f'Could not unfollow {f.id}: {e}')
             else:
                 f.status = Status.mutual
                 f.next_due = datetime.utcnow() + self._following_followup_time
+
+                logger.info(f'Mutual follower {f.id}, due for checkup after {f.next_due}')
 
             self._db.commit()
 
@@ -212,11 +238,11 @@ def main(
         consumer_secret: str = typer.Option(environ.get('FOLGMEG_CONSUMER_SECRET')),
         access_token: str = typer.Option(environ.get('FOLGMEG_ACCESS_TOKEN')),
         access_token_secret: str = typer.Option(environ.get('FOLGMEG_ACCESS_TOKEN_SECRET')),
-        target_inflight_ratio: float = typer.Option(float(environ.get('FOLGMEG_TARGET_INFLIGHT_RATIO', 0.10))),
+        target_inflight_ratio: float = typer.Option(float(environ.get('FOLGMEG_TARGET_INFLIGHT_RATIO', 0.02))),
         following_sample_size: int = typer.Option(int(environ.get('FOLGMEG_FOLLOWING_SAMPLE_SIZE', 10))),
         activity_num_days_lookback: int = typer.Option(int(environ.get('FOLGMEG_ACTIVITY_NUM_DAYS_LOOKBACK', 7))),
         tweet_sample_size: int = typer.Option(int(environ.get('FOLGMEG_TWEET_SAMPLE_SIZE', 100))),
-        following_followup_num_days: int = typer.Option(int(environ.get('FOLGMEG_FOLLOWING_FOLLOWUP_NUM_DAYS', 14))),
+        following_followup_num_days: int = typer.Option(int(environ.get('FOLGMEG_FOLLOWING_FOLLOWUP_NUM_DAYS', 3))),
 ):
     logging.basicConfig(
         stream=stdout,
