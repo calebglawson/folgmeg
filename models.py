@@ -24,9 +24,3 @@ class Follower(Base):
     __tablename__ = 'followers'
 
     id = Column(Integer, primary_key=True)
-
-
-class OrganicFollowing(Base):
-    __tablename__ = 'organic_following'
-
-    id = Column(Integer, primary_key=True)
