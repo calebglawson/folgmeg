@@ -31,12 +31,14 @@ class FolgMeg:
             activity_days_lookback,
             tweet_sample_size,
             num_followup_days,
+            desc_exclusions,
     ):
         self._target_inflight_ratio = target_inflight_ratio
         self._follower_sample_size = follower_sample_size
         self._activity_lookback = timedelta(days=activity_days_lookback)
         self._tweet_sample_size = tweet_sample_size
         self._followup_time = timedelta(days=num_followup_days)
+        self._description_exclusions = desc_exclusions.split(",") if desc_exclusions else desc_exclusions
 
         self._db = self._init_db(db_path)
 
@@ -119,13 +121,25 @@ class FolgMeg:
         second_degree_followers = random.sample(second_degree_followers, self._follower_sample_size)
         seven_days_ago = datetime.utcnow() - self._activity_lookback
         for follower in second_degree_followers:
-            # Skip if they are scheduled to be followed
+            # Skip if they are already on our radar
             if self._db.query(ScriptedFollowingStatus).filter(ScriptedFollowingStatus.id == follower).count() == 1:
                 continue
 
             # Skip if they are already a follower
             if self._db.query(Follower).filter(Follower.id == follower).count() == 1:
                 continue
+
+            if self._description_exclusions:
+                try:
+                    f = self._api.get_user(user_id=follower)
+
+                    if any([exclude in f.description for exclude in self._description_exclusions]):
+                        logger.info(f'User description contains an exclusion phrase, skipping: {follower}')
+
+                        continue
+
+                except tweepy.TweepyException as e:
+                    logger.error(f'Could not fetch user profile {follower} for exclusion phrase filtration: {e}')
 
             last_tweets = []
             try:
@@ -228,6 +242,10 @@ def main(
         activity_days_lookback: int = typer.Option(int(environ.get('FOLGMEG_ACTIVITY_DAYS_LOOKBACK', 7))),
         tweet_sample_size: int = typer.Option(int(environ.get('FOLGMEG_TWEET_SAMPLE_SIZE', 100))),
         num_followup_days: int = typer.Option(int(environ.get('FOLGMEG_NUM_FOLLOWUP_DAYS', 3))),
+        description_exclusions: str = typer.Option(
+            environ.get('FOLGMEG_DESCRIPTION_EXCLUSIONS'),
+            help="Comma separated string, e.g. abc,123,def"
+        ),
 ):
     logging.basicConfig(
         stream=stdout,
@@ -247,6 +265,7 @@ def main(
         activity_days_lookback,
         tweet_sample_size,
         num_followup_days,
+        description_exclusions,
     ).run()
 
 
