@@ -27,16 +27,10 @@ class FolgMeg:
             access_token,
             access_token_secret,
             target_inflight_ratio,
-            follower_sample_size,
-            activity_days_lookback,
-            tweet_sample_size,
             num_followup_days,
             desc_exclusions,
     ):
         self._target_inflight_ratio = target_inflight_ratio
-        self._follower_sample_size = follower_sample_size
-        self._activity_lookback = timedelta(days=activity_days_lookback)
-        self._tweet_sample_size = tweet_sample_size
         self._followup_time = timedelta(days=num_followup_days)
         self._description_exclusions = desc_exclusions.split(",") if desc_exclusions else desc_exclusions
 
@@ -104,7 +98,9 @@ class FolgMeg:
             ScriptedFollowingStatus.status == Status.pending
         ).count()
 
-        if pending / self._db.query(Follower).count() > self._target_inflight_ratio:
+        target_inflight = self._db.query(Follower).count() * self._target_inflight_ratio
+
+        if pending >= target_inflight:
             return
 
         random_follower = self._db.query(Follower).order_by(func.random()).first()
@@ -115,8 +111,8 @@ class FolgMeg:
         except tweepy.TweepyException as e:
             logger.error(f'Could not fetch followers of {random_follower.id}: {e}')
 
-        second_degree_followers = random.sample(second_degree_followers, self._follower_sample_size)
-        seven_days_ago = datetime.utcnow() - self._activity_lookback
+        second_degree_followers = random.sample(second_degree_followers, target_inflight - pending)
+        seven_days_ago = datetime.utcnow() - timedelta(days=7)
         for follower in second_degree_followers:
             # Skip if they are already on our radar
             if self._db.query(ScriptedFollowingStatus).filter(ScriptedFollowingStatus.id == follower).count() == 1:
@@ -143,7 +139,7 @@ class FolgMeg:
                 last_tweets = [
                     t for t in self._api.user_timeline(
                         user_id=follower,
-                        count=self._tweet_sample_size,
+                        count=100,
                         include_rts=True,
                     )
                     if t.created_at.timestamp() > seven_days_ago.timestamp()
@@ -235,9 +231,6 @@ def main(
         access_token: str = typer.Option(environ.get('FOLGMEG_ACCESS_TOKEN')),
         access_token_secret: str = typer.Option(environ.get('FOLGMEG_ACCESS_TOKEN_SECRET')),
         target_inflight_ratio: float = typer.Option(float(environ.get('FOLGMEG_TARGET_INFLIGHT_RATIO', 0.02))),
-        follower_sample_size: int = typer.Option(int(environ.get('FOLGMEG_FOLLOWER_SAMPLE_SIZE', 10))),
-        activity_days_lookback: int = typer.Option(int(environ.get('FOLGMEG_ACTIVITY_DAYS_LOOKBACK', 7))),
-        tweet_sample_size: int = typer.Option(int(environ.get('FOLGMEG_TWEET_SAMPLE_SIZE', 100))),
         num_followup_days: int = typer.Option(int(environ.get('FOLGMEG_NUM_FOLLOWUP_DAYS', 3))),
         description_exclusions: str = typer.Option(
             environ.get('FOLGMEG_DESCRIPTION_EXCLUSIONS'),
@@ -258,9 +251,6 @@ def main(
         access_token,
         access_token_secret,
         target_inflight_ratio,
-        follower_sample_size,
-        activity_days_lookback,
-        tweet_sample_size,
         num_followup_days,
         description_exclusions,
     ).run()
