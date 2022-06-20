@@ -98,7 +98,7 @@ class FolgMeg:
             ScriptedFollowingStatus.status == Status.pending
         ).count()
 
-        target_inflight = self._db.query(Follower).count() * self._target_inflight_ratio
+        target_inflight = int(self._db.query(Follower).count() * self._target_inflight_ratio)
 
         if pending >= target_inflight:
             return
