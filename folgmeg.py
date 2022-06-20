@@ -107,16 +107,13 @@ class FolgMeg:
         if pending / self._db.query(Follower).count() > self._target_inflight_ratio:
             return
 
-        followers_sample = self._db.query(Follower).order_by(func.random()).limit(
-            self._follower_sample_size
-        ).all()
+        random_follower = self._db.query(Follower).order_by(func.random()).first()
 
         second_degree_followers = []
-        for follower in followers_sample:
-            try:
-                second_degree_followers.extend(self._api.get_follower_ids(user_id=follower.id, count=100))
-            except tweepy.TweepyException as e:
-                logger.error(f'Could not fetch followers of {follower.id}: {e}')
+        try:
+            second_degree_followers = self._api.get_follower_ids(user_id=random_follower.id)
+        except tweepy.TweepyException as e:
+            logger.error(f'Could not fetch followers of {random_follower.id}: {e}')
 
         second_degree_followers = random.sample(second_degree_followers, self._follower_sample_size)
         seven_days_ago = datetime.utcnow() - self._activity_lookback
@@ -143,14 +140,14 @@ class FolgMeg:
 
             last_tweets = []
             try:
-                last_tweets.extend([
+                last_tweets = [
                     t for t in self._api.user_timeline(
                         user_id=follower,
                         count=self._tweet_sample_size,
                         include_rts=True,
                     )
                     if t.created_at.timestamp() > seven_days_ago.timestamp()
-                ])
+                ]
             except Exception as e:
                 logger.error(f'Could not retrieve tweets for {follower}: {e}')
 
