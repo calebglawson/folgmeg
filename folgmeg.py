@@ -138,6 +138,7 @@ class FolgMeg:
                     logger.error(f'Could not fetch user profile {follower} for exclusion phrase filtration: {e}')
 
             tweets = []
+            tweets_in_the_last_week = []
             try:
                 tweets = self._api.user_timeline(user_id=follower, count=100, include_rts=True)
                 tweets_in_the_last_week = [t for t in tweets if t.created_at.timestamp() > seven_days_ago.timestamp()]
