@@ -134,25 +134,19 @@ class FolgMeg:
                 except tweepy.TweepyException as e:
                     logger.error(f'Could not fetch user profile {follower} for exclusion phrase filtration: {e}')
 
-            last_tweets = []
+            tweets = []
             try:
-                last_tweets = [
-                    t for t in self._api.user_timeline(
-                        user_id=follower,
-                        count=100,
-                        include_rts=True,
-                    )
-                    if t.created_at.timestamp() > seven_days_ago.timestamp()
-                ]
+                tweets = self._api.user_timeline(user_id=follower, count=100, include_rts=True)
+                tweets_in_the_last_week = [t for t in tweets if t.created_at.timestamp() > seven_days_ago.timestamp()]
             except Exception as e:
                 logger.error(f'Could not retrieve tweets for {follower}: {e}')
 
             # Skip if they're not active
-            if len(last_tweets) == 0:
+            if len(tweets_in_the_last_week) == 0:
                 continue
 
             hours = {h: 0 for h in range(0, 24)}
-            for tweet in last_tweets:
+            for tweet in tweets:
                 hour = tweet.created_at.hour
                 hours[hour] = hours[hour] + 1
 
