@@ -174,7 +174,7 @@ class FolgMeg:
 
             earliest_most_common_hour = max(hours, key=hours.get)
 
-            follow_time = follow_day.replace(hour=earliest_most_common_hour, minute=random.randint(0, 60))
+            follow_time = follow_day.replace(hour=earliest_most_common_hour, minute=random.randint(0, 59))
 
             self._db.add(
                 ScriptedFollowingStatus(
