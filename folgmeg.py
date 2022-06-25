@@ -114,7 +114,14 @@ class FolgMeg:
         except tweepy.TweepyException as e:
             logger.error(f'Could not fetch followers of {random_follower.id}: {e}')
 
-        second_degree_followers = random.sample(second_degree_followers, target_inflight - pending)
+        if len(second_degree_followers) == 0:
+            return
+
+        second_degree_followers = random.sample(
+            second_degree_followers,
+            # Some people just don't have many followers
+            min((target_inflight - pending), len(second_degree_followers)),
+        )
         seven_days_ago = datetime.utcnow() - timedelta(days=7)
         for follower in second_degree_followers:
             # Skip if they are already on our radar
@@ -149,15 +156,25 @@ class FolgMeg:
             if len(tweets_in_the_last_week) == 0:
                 continue
 
-            hours = {h: 0 for h in range(0, 24)}
+            # One week with 24-hour days
+            week = {d: {h: 0 for h in range(0, 24)} for d in range(0, 7)}
             for tweet in tweets:
+                weekday = tweet.created_at.weekday()
                 hour = tweet.created_at.hour
-                hours[hour] = hours[hour] + 1
+
+                week[weekday][hour] = week[weekday][hour] + 1
+
+            # Find their next active day of week, starting with tomorrow
+            # We skip inactive users, so there should be at least one weekday with activity
+            follow_day = datetime.utcnow() + timedelta(days=1)
+            hours = week[follow_day.weekday()]
+            while hours == {h: 0 for h in range(0, 24)}:
+                follow_day = follow_day + timedelta(days=1)
+                hours = week[follow_day.weekday()]
 
             earliest_most_common_hour = max(hours, key=hours.get)
 
-            tomorrow = datetime.utcnow() + timedelta(days=1)
-            follow_time = tomorrow.replace(hour=earliest_most_common_hour)
+            follow_time = follow_day.replace(hour=earliest_most_common_hour, minute=random.randint(0, 60))
 
             self._db.add(
                 ScriptedFollowingStatus(
