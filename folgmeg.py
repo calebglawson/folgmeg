@@ -235,7 +235,7 @@ def main(
             environ.get('FOLGMEG_DESCRIPTION_EXCLUSIONS'),
             help="Comma separated string, e.g. abc,123,def"
         ),
-        dry_run: bool = typer.Option(False),
+        dry_run: bool = typer.Option(bool(environ.get('FOLGMEG_DRY_RUN', False))),
 ):
     logging.basicConfig(
         stream=stdout,
