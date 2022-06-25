@@ -1,8 +1,10 @@
+import logging
 import logging.handlers
+import random
+from enum import Enum
 from sys import stdout
 from datetime import datetime, timedelta
 from pathlib import Path
-import random
 from os import environ
 from typing import Optional
 
@@ -142,7 +144,7 @@ class FolgMeg:
                         continue
 
                 except tweepy.TweepyException as e:
-                    logger.error(f'Could not fetch user profile {follower} for exclusion phrase filtration: {e}')
+                    logger.warning(f'Could not fetch user profile {follower} for exclusion phrase filtration: {e}')
 
             tweets = []
             tweets_in_the_last_week = []
@@ -241,6 +243,28 @@ class FolgMeg:
             self._db.commit()
 
 
+class LoggingLevel(str, Enum):
+    critical = "critical"
+    error = "error"
+    warning = "warning"
+    info = "info"
+    debug = "debug"
+
+    def __int__(self):
+        level = self.__str__()
+
+        if self.critical in level:
+            return logging.CRITICAL
+        elif self.error in level:
+            return logging.ERROR
+        elif self.warning in level:
+            return logging.WARNING
+        elif self.info in level:
+            return logging.INFO
+        elif self.debug in level:
+            return logging.DEBUG
+
+
 def main(
         db_path: Optional[Path] = typer.Option(environ.get('FOLGMEG_DB_PATH', 'folgmeg')),
         consumer_key: str = typer.Option(environ.get('FOLGMEG_CONSUMER_KEY')),
@@ -254,12 +278,13 @@ def main(
             help="Comma separated string, e.g. abc,123,def"
         ),
         dry_run: bool = typer.Option(bool(environ.get('FOLGMEG_DRY_RUN', False))),
+        logging_level: LoggingLevel = typer.Option(environ.get('FOLGMEG_LOGGING_LEVEL', 'info')),
 ):
     logging.basicConfig(
         stream=stdout,
         filemode="w",
         format=Log_Format,
-        level=logging.INFO,
+        level=int(logging_level),
     )
 
     FolgMeg(
