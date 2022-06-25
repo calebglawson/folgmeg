@@ -29,6 +29,7 @@ class FolgMeg:
             target_inflight_ratio,
             num_followup_days,
             desc_exclusions,
+            dry_run,
     ):
         self._target_inflight_ratio = target_inflight_ratio
         self._followup_time = timedelta(days=num_followup_days)
@@ -40,6 +41,8 @@ class FolgMeg:
             tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret),
             wait_on_rate_limit=False
         )
+
+        self._dry_run = dry_run
 
     @staticmethod
     def _init_db(db_path: Path):
@@ -176,7 +179,8 @@ class FolgMeg:
 
         for p in due_pending:
             try:
-                self._api.create_friendship(user_id=p.id)
+                if not self._dry_run:
+                    self._api.create_friendship(user_id=p.id)
 
                 p.status = Status.following
                 p.next_due = datetime.utcnow() + self._followup_time
@@ -200,7 +204,8 @@ class FolgMeg:
         for f in following_script:
             if self._db.query(Follower).filter(Follower.id == f.id).first() is None:
                 try:
-                    self._api.destroy_friendship(user_id=f.id)
+                    if not self._dry_run:
+                        self._api.destroy_friendship(user_id=f.id)
 
                     f.status = Status.expired
                     f.next_due = None
@@ -230,6 +235,7 @@ def main(
             environ.get('FOLGMEG_DESCRIPTION_EXCLUSIONS'),
             help="Comma separated string, e.g. abc,123,def"
         ),
+        dry_run: bool = typer.Option(False),
 ):
     logging.basicConfig(
         stream=stdout,
@@ -247,6 +253,7 @@ def main(
         target_inflight_ratio,
         num_followup_days,
         description_exclusions,
+        dry_run,
     ).run()
 
 
