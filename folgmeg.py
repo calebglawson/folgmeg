@@ -147,32 +147,25 @@ class FolgMeg:
                     logger.warning(f'Could not fetch user profile {follower} for exclusion phrase filtration: {e}')
 
             tweets = []
-            tweets_in_the_last_week = []
             try:
                 tweets = self._api.user_timeline(user_id=follower, count=200, include_rts=True)
-                tweets_in_the_last_week = [t for t in tweets if t.created_at.timestamp() > seven_days_ago.timestamp()]
             except Exception as e:
                 logger.error(f'Could not retrieve tweets for {follower}: {e}')
 
-            # Skip if they're not active
+            # Skip if they're not active in the past 7 days
+            tweets_in_the_last_week = [t for t in tweets if t.created_at.timestamp() > seven_days_ago.timestamp()]
             if len(tweets_in_the_last_week) == 0:
                 continue
 
-            # One week with 24-hour days
-            week = {d: {h: 0 for h in range(0, 24)} for d in range(0, 7)}
-            for tweet in tweets:
-                weekday = tweet.created_at.weekday()
-                hour = tweet.created_at.hour
-
-                week[weekday][hour] = week[weekday][hour] + 1
-
-            # Find their next active day of week, starting with tomorrow
-            # We skip inactive users, so there should be at least one weekday with activity
             follow_day = datetime.utcnow() + timedelta(days=1)
-            hours = week[follow_day.weekday()]
-            while hours == {h: 0 for h in range(0, 24)}:
-                follow_day = follow_day + timedelta(days=1)
-                hours = week[follow_day.weekday()]
+            hours = {h: 0 for h in range(0, 24)}
+            for tweet in tweets:
+                if follow_day.weekday() == tweet.created_at.weekday():
+                    hours[tweet.created_at.hour] = hours[tweet.created_at.hour] + 1
+
+            # Skip if they're not likely to be active tomorrow
+            if hours == {h: 0 for h in range(0, 24)}:
+                continue
 
             earliest_most_common_hour = max(hours, key=hours.get)
 
