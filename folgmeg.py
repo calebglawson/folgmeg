@@ -39,9 +39,13 @@ class FolgMeg:
 
         self._db = self._init_db(db_path)
 
-        self._api = tweepy.API(
+        self._client = tweepy.API(
             tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret),
-            wait_on_rate_limit=False
+        )
+
+        self._wait_client = tweepy.API(
+            tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret),
+            wait_on_rate_limit=True
         )
 
         self._dry_run = dry_run
@@ -73,14 +77,14 @@ class FolgMeg:
 
     def _verify_self(self):
         try:
-            self._me = self._api.verify_credentials(skip_status=True)
+            self._me = self._client.verify_credentials(skip_status=True)
         except tweepy.errors.TweepyException as e:
             logger.error(f'Could not verify self: {e}')
 
     def _update_follower_list(self):
         self._verify_self()
 
-        if self._db.query(Follower).count() == self._me.followers_count:
+        if self._me is None or self._db.query(Follower).count() == self._me.followers_count:
             return
 
         try:
@@ -88,7 +92,7 @@ class FolgMeg:
             self._db.bulk_save_objects(
                 [
                     Follower(id=follower)
-                    for follower in tweepy.Cursor(self._api.get_follower_ids, user_id=self._me.id).items()
+                    for follower in tweepy.Cursor(self._wait_client.get_follower_ids, user_id=self._me.id).items()
                 ]
             )
 
@@ -112,7 +116,7 @@ class FolgMeg:
 
         second_degree_followers = []
         try:
-            second_degree_followers = self._api.get_follower_ids(user_id=random_follower.id)
+            second_degree_followers = self._client.get_follower_ids(user_id=random_follower.id)
         except tweepy.TweepyException as e:
             logger.error(f'Could not fetch followers of {random_follower.id}: {e}')
 
@@ -136,7 +140,7 @@ class FolgMeg:
 
             if self._description_exclusions:
                 try:
-                    f = self._api.get_user(user_id=follower)
+                    f = self._client.get_user(user_id=follower)
 
                     if any([exclude in f.description for exclude in self._description_exclusions]):
                         logger.info(f'User description contains an exclusion phrase, skipping: {follower}')
@@ -148,7 +152,7 @@ class FolgMeg:
 
             tweets = []
             try:
-                tweets = self._api.user_timeline(user_id=follower, count=200, include_rts=True)
+                tweets = self._client.user_timeline(user_id=follower, count=200, include_rts=True)
             except Exception as e:
                 logger.error(f'Could not retrieve tweets for {follower}: {e}')
 
@@ -193,7 +197,7 @@ class FolgMeg:
         for p in due_pending:
             try:
                 if not self._dry_run:
-                    self._api.create_friendship(user_id=p.id)
+                    self._client.create_friendship(user_id=p.id)
 
                 p.status = Status.following
                 p.next_due = datetime.utcnow() + self._followup_time
@@ -218,7 +222,7 @@ class FolgMeg:
             if self._db.query(Follower).filter(Follower.id == f.id).first() is None:
                 try:
                     if not self._dry_run:
-                        self._api.destroy_friendship(user_id=f.id)
+                        self._client.destroy_friendship(user_id=f.id)
 
                     f.status = Status.expired
                     f.next_due = None
