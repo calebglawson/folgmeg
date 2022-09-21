@@ -143,7 +143,10 @@ class FolgMeg:
                 try:
                     f = self._client.get_user(user_id=follower)
 
-                    if any([exclude in re.sub(r"\W", " ", f.description) for exclude in self._description_exclusions]):
+                    if any([
+                                re.search(exclude, re.sub(r"\W", " ", f.description), re.I)
+                                for exclude in self._description_exclusions
+                            ]):
                         logger.info(f'User description contains an exclusion phrase, skipping: {follower}')
 
                         continue
