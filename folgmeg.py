@@ -1,6 +1,7 @@
 import logging
 import logging.handlers
 import random
+import re
 from enum import Enum
 from sys import stdout
 from datetime import datetime, timedelta
@@ -142,7 +143,7 @@ class FolgMeg:
                 try:
                     f = self._client.get_user(user_id=follower)
 
-                    if any([exclude in f.description for exclude in self._description_exclusions]):
+                    if any([exclude in re.sub(r"\W", " ", f.description) for exclude in self._description_exclusions]):
                         logger.info(f'User description contains an exclusion phrase, skipping: {follower}')
 
                         continue
